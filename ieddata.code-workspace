@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"go.lintTool": "golangci-lint",
+		"go.testFlags": ["-exec", "${workspaceFolder}/scripts/sudo-askpass.sh"]
+	}
+}
