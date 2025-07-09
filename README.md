@@ -8,10 +8,23 @@
 
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/siemens/ieddata)](https://pkg.go.dev/github.com/siemens/ieddata)
 [![GitHub](https://img.shields.io/github/license/siemens/ieddata)](https://img.shields.io/github/license/siemens/ieddata)
-![build and test](https://github.com/siemens/ieddata/workflows/build%20and%20test/badge.svg?branch=main)
+![build and test](https://github.com/siemens/ieddata//actions/workflows/buildandtest.yaml/badge.svg?branch=main)
+![goroutines](https://img.shields.io/badge/go%20routines-not%20leaking-success)
 ![file descriptors](https://img.shields.io/badge/file%20descriptors-not%20leaking-success)
 [![Go Report Card](https://goreportcard.com/badge/github.com/siemens/ieddata)](https://goreportcard.com/report/github.com/siemens/ieddata)
-![Coverage](https://img.shields.io/badge/Coverage-91.4%25-brightgreen)
+![Coverage](https://img.shields.io/badge/Coverage-88.2%25-brightgreen)
+
+`iedata` provides querying information about a Siemens Industrial Edge (virtual)
+device from an app inside the IE(v)D.
+
+> [!NOTE]
+> 
+> This package is "CGO-free" as it leverages the
+> [modernc.org/sqlite](https://pkg.go.dev/modernc.org/sqlite) sqlite3 driver
+> module. When using the `ieddata` module, please make sure that your main
+> module's `go.mod` (indirectly) requires the `modernc/libc` module _in the
+> same_ version as required by [`modernc.org/sqlite`'s
+> `go.mod`](https://gitlab.com/cznic/sqlite/-/blob/v1.38.0/go.mod).
 
 `ieddata` is part of the "Edgeshark" project that consist of several
 repositories:
@@ -21,23 +34,14 @@ repositories:
 - [Containershark Extcap plugin for
   Wireshark](https://github.com/siemens/cshargextcap)
 - support modules:
+  - [turtlefinder](https://github.com/siemens/turtlefinder)
   - [csharg (CLI)](https://github.com/siemens/csharg)
   - [mobydig](https://github.com/siemens/mobydig)
   - 🖝 **ieddata** 🖜
 
-## Installation
-
-```sh
-go get github.com/siemens/ieddata@latest
-```
-
-Note: `ieddata` supports versions of Go 1 that are noted by the [Go release
-policy](https://golang.org/doc/devel/release.html#policy), that is, major
-versions _N_ and _N_-1 (where _N_ is the current major version).
-
 ## Usage
 
-This example queries a Siemens Industrial Edge (virtual) device's...
+The following example queries a Siemens Industrial Edge (virtual) device's...
 - ...device name and its owner,
 - ...and the list of installed applications.
 
@@ -51,23 +55,32 @@ di, _ := db.DeviceInfo()
 fmt.Printf("device name: %s\nowner name: %s\n", di["deviceName"], di["ownerName"])
 
 apps, _ := db.Apps()
-slices.SortFunc(apps, func(a, b ieddata.App) bool { return a.Title < b.Title })
+slices.SortFunc(apps, func(a, b ieddata.App) int { return strings.Compare(a.Title, b.Title) })
 for _, app := range apps {
    fmt.Printf("app: %q %s\n", app.Title, app.Id)
 }
 ```
 
-> _Nota bene:_ the IED's `platformbox.db` is opened always in read-only mode.
-> Thus, the underlying database connection on purpose does not allow callers to
-> modify the IED's databases using this module.
+> _Nota bene:_ we first copy the IED's `platformbox.db` in a temporary location
+> and the open only the copy.
 
-## View Package Documentation Locally
+## DevContainer
 
-```sh
-make pkgsite
-```
+> [!CAUTION]
+>
+> Do **not** use VSCode's "~~Dev Containers: Clone Repository in Container
+> Volume~~" command, as it is utterly broken by design, ignoring
+> `.devcontainer/devcontainer.json`.
 
-Then navigate to http://localhost:6060/github.com/siemens/ieddata.
+1. `git clone https://github.com/siemens/ieddata`
+2. in VSCode: Ctrl+Shift+P, "Dev Containers: Open Workspace in Container..."
+3. select `ieddata.code-workspace` and off you go...
+
+## Supported Go Versions
+
+`morbyd` supports versions of Go that are noted by the [Go release
+policy](https://golang.org/doc/devel/release.html#policy), that is, major
+versions _N_ and _N_-1 (where _N_ is the current major version).
 
 ## Deployment
 
@@ -81,19 +94,6 @@ to your binary (see also
 Additionally, you need to deploy any container that leverages this Go module
 with `pid:host` in order to access the file system view (mount namespaces) of
 other containers.
-
-## Unit Tests
-
-This Go module comes with unit tests and some of these unit tests need to be run
-as root (UID 0). The unit tests additionally require an operational Docker
-container engine to be up and running (for simulating a fake IED edge core
-runtime container). To run the tests, simply do:
-
-```sh
-make test
-```
-
-The unit tests also include checks for file descriptor leaks.
 
 # Contributing
 

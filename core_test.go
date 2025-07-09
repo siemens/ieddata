@@ -5,11 +5,11 @@
 package ieddata
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/ory/dockertest/v3/docker"
 	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/lxkns/ops/mountineer"
 
@@ -27,7 +27,6 @@ var _ = Describe("IED runtime", func() {
 		}
 		goodfds := Filedescriptors()
 		DeferCleanup(func() {
-			pool.Client.HTTPClient.CloseIdleConnections()
 			// There's a whale watcher in the background needing to wind, so we
 			// give it a chance to get scheduled and run its course.
 			Eventually(Filedescriptors).WithTimeout(2 * time.Second).WithPolling(250 * time.Millisecond).
@@ -35,20 +34,11 @@ var _ = Describe("IED runtime", func() {
 		})
 	})
 
-	It("doesn't crash when IED runtime isn't present", func() {
-		// now that we have a fake edge core container running for the whole
-		// suite we need to move it out of the way for just this test...
-		Expect(pool.Client.RenameContainer(docker.RenameContainerOptions{
-			ID:   fakecore.Container.ID,
-			Name: "off-" + EdgeIotCoreContainerName,
-		})).To(Succeed())
-		defer func() {
-			Expect(pool.Client.RenameContainer(docker.RenameContainerOptions{
-				ID:   fakecore.Container.ID,
-				Name: EdgeIotCoreContainerName,
-			})).To(Succeed())
-		}()
-
+	It("doesn't crash when IED runtime isn't present", func(ctx context.Context) {
+		Expect(fakecore.Rename(ctx, "off-"+EdgeIotCoreContainerName)).To(Succeed())
+		DeferCleanup(func(ctx context.Context) {
+			Expect(fakecore.Rename(ctx, EdgeIotCoreContainerName)).To(Succeed())
+		})
 		Expect(edgeCoreContainerPID()).Error().To(HaveOccurred())
 	})
 
@@ -60,8 +50,7 @@ var _ = Describe("IED runtime", func() {
 		By("...and container canary file")
 		corefs := Successful(mountineer.New(model.NamespaceRef{fmt.Sprintf("/proc/%d/ns/mnt", pid)}, nil))
 		defer corefs.Close()
-		Expect(corefs.ReadFile("/canary")).To(
-			WithTransform(func(actual []byte) string { return string(actual) }, Equal("HOLA\n")))
+		Expect(string(Successful(corefs.ReadFile("/canary")))).To(Equal("HOLA\n"))
 	})
 
 })

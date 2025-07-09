@@ -25,20 +25,20 @@ type App struct {
 	VersionStatus         int
 	ReleaseNotes          string
 	OwnerId               string `db:"appOwnerId"`
-	UserId                string
-	ProjectId             string
-	Title                 string
-	RepositoryName        string
-	Description           string
+	UserId                string `db:"userId"`
+	ProjectId             string `db:"projectId"`
+	Title                 string `db:"title"`
+	RepositoryName        string `db:"repositoryName"`
+	Description           string `db:"description"`
 	URL                   string `db:"webAddress"`
 	IconPath              string `db:"icon"`
 	AppStatus             int
-	CompanyName           string
+	CompanyName           string `db:"companyName"`
 	CompanyURL            string `db:"companyWebAddress"`
-	IsDeveloperAppInstall int
-	IsVisible             int
-	SortWeight            int
-	RunAsService          bool `db:"runasservice"`
+	IsDeveloperAppInstall int    `db:"isDeveloperAppInstall"`
+	IsVisible             int    `db:"isVisible"`
+	SortWeight            int    `db:"sortWeight"`
+	RunAsService          bool   `db:"runasservice"`
 	IsUpdatedOnPortal     int
 	Created               time.Time `db:"createdDate"`
 	Modified              time.Time `db:"modifiedDate"`

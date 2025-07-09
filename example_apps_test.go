@@ -6,8 +6,8 @@ package ieddata_test
 
 import (
 	"fmt"
-
-	"golang.org/x/exp/slices"
+	"slices"
+	"strings"
 
 	ieddata "github.com/siemens/ieddata"
 )
@@ -28,7 +28,7 @@ func Example_listInstalledApps() {
 
 	// Sort the apps by their titles in order to get a stable output result that
 	// can also be tested.
-	slices.SortFunc(apps, func(a, b ieddata.App) bool { return a.Title < b.Title })
+	slices.SortFunc(apps, func(a, b ieddata.App) int { return strings.Compare(a.Title, b.Title) })
 	for _, app := range apps {
 		fmt.Printf("%q %s %s\n", app.Title, app.Version, app.Id)
 	}
