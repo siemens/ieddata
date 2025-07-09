@@ -5,81 +5,57 @@
 package ieddata
 
 import (
-	"errors"
+	"context"
+	"fmt"
 	"os"
 	"testing"
-	"time"
 
-	"github.com/cenkalti/backoff/v4"
-	"github.com/ory/dockertest/v3"
-	"github.com/ory/dockertest/v3/docker"
+	"github.com/thediveo/morbyd"
+	"github.com/thediveo/morbyd/build"
+	"github.com/thediveo/morbyd/run"
+	"github.com/thediveo/morbyd/session"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	. "github.com/thediveo/success"
 )
 
-var pool *dockertest.Pool
-var fakecore *dockertest.Resource
+var sess *morbyd.Session
+var fakecore *morbyd.Container
 
-func SetupSuite() {
-	var err error
-	pool, err = dockertest.NewPool("unix:///run/docker.sock")
-	if err != nil {
-		panic(err)
+var _ = BeforeSuite(func(ctx context.Context) {
+	if os.Getuid() != 0 {
+		return
 	}
-	_ = pool.Client.RemoveContainer(docker.RemoveContainerOptions{
-		ID:    EdgeIotCoreContainerName,
-		Force: true,
+
+	sess = Successful(morbyd.NewSession(ctx,
+		session.WithAutoCleaning("test.ieddata=")))
+	DeferCleanup(func(ctx context.Context) {
+		sess.Close(ctx)
+		sess = nil
 	})
-	fakecore, err = pool.BuildAndRunWithBuildOptions(
-		&dockertest.BuildOptions{
-			Dockerfile: "Dockerfile",
-			ContextDir: "tests/sqlite-alpine-appengine-db",
-			BuildArgs: []docker.BuildArg{
-				{Name: "APPENGDBPATH", Value: dbBaseDir},
-			},
-		},
-		&dockertest.RunOptions{
-			Name: EdgeIotCoreContainerName,
-		})
-	if err != nil {
-		panic(err)
-	}
 
-	// wait for the container to be properly alive...
-	err = backoff.Retry(func() error {
-		c, err := pool.Client.InspectContainer(EdgeIotCoreContainerName)
-		if err != nil {
-			return err
-		}
-		if !c.State.Running {
-			return errors.New("edge core not running")
-		}
-		return nil
-	}, backoff.WithMaxRetries(backoff.NewConstantBackOff(250*time.Millisecond), 4*5))
-	if err != nil {
-		panic(err)
-	}
-}
+	By("building a fake edge core image if necessary")
+	const imgref = "ieddata/fake-core"
 
-func TeardownSuite() {
-	if pool != nil && fakecore != nil {
-		_ = pool.Purge(fakecore)
-	}
-}
+	Expect(sess.BuildImage(ctx,
+		"tests/sqlite-alpine-appengine-db",
+		build.WithTag(imgref),
+		build.WithBuildArg("APPENGDBPATH="+dbBaseDir),
+		build.WithBuildArg("PLATFORMBOXDBNAME="+PlatformBoxDb),
+	)).Error().NotTo(HaveOccurred(), "image build failed")
+
+	By(fmt.Sprintf("deploying a fake edge core image %q", imgref))
+	fakecore = Successful(sess.Run(ctx,
+		imgref, run.WithName(EdgeIotCoreContainerName)))
+	DeferCleanup(func(ctx context.Context) {
+		fakecore.Kill(ctx)
+	})
+	Expect(fmt.Sprintf("/proc/%d/root/%s/%s",
+		Successful(fakecore.PID(ctx)), dbBaseDir, PlatformBoxDb)).To(BeAnExistingFile())
+})
 
 func TestIEDData(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "ieddata package")
-}
-
-func TestMain(m *testing.M) {
-	// We need the fake edge core container to be present also for the testable
-	// examples and we need to properly clean up when a testable example fails,
-	// so we have to wrap everything to ensure running TeardownSuite.
-	os.Exit(func() int {
-		SetupSuite()
-		defer TeardownSuite()
-		return m.Run()
-	}())
 }

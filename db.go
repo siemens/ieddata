@@ -6,6 +6,8 @@ package ieddata
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"path"
 	"regexp"
 	"sync"
@@ -14,7 +16,8 @@ import (
 	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/lxkns/ops/mountineer"
 
-	_ "github.com/mattn/go-sqlite3" // pull in "sqlite3" driver
+	// _ "github.com/mattn/go-sqlite3" // pull in "sqlite3" driver
+	_ "modernc.org/sqlite"
 )
 
 // PlatformBoxDb is the file name of the platform box database.
@@ -24,18 +27,18 @@ const PlatformBoxDb = "platformbox.db"
 const dbBaseDir = "/data/app_engine/db"
 
 // Name of DB driver.
-const dbDriverName = "sqlite3"
+const dbDriverName = "sqlite"
 
 // AppEngineDB implements access to an IED app engine host database.
 type AppEngineDB struct {
 	*sqlx.DB
-	iedRuntimeMnt *mountineer.Mountineer
-	mu            sync.Mutex
+	copiedDatabasePath string
+	closeMu            sync.Mutex
 }
 
-// Open returns a new database “connection” to the specified app engine DB (in
-// read-only mode), such as “platformboxdb”, or an error, if neither the IED
-// runtime container nor its app engine database(s) could be located.
+// Open returns a new database “connection” to the specified app engine DB, such
+// as “platformboxdb”, or an error, if neither the IED runtime container nor its
+// app engine database(s) could be located.
 //
 // The database name is sanitizied by keeping only alpha-numerically (ASCII)
 // characters, as well as dots “.” (but not “..”), dashes “-”, and underscores
@@ -77,30 +80,57 @@ func sanitize(basename string) string {
 // it in some tests without the need for a correctly set-up fake edge runtime
 // container. Please note that any caller must have sanitized the name parameter
 // first.
+//
+// As it turns out there are some situations which we don't yet fully understand
+// but that causes opening the database via a proc path to fail, even if it
+// succeeds in other situations. Interestingly, the termdbms sqlite3 TUI works
+// in all these situation and an analysis of its source code base reveals that
+// it simply makes a copy of the original database, see
+// https://github.com/mathaou/termdbms/blob/be6f397196077cc7c9ced86e6460470e3b223f3e/main.go#L132.
+//
+// Well, what's good for the goose is good for the gander, so copy it is. Sigh.
 func open(name string, pid model.PIDType) (*AppEngineDB, error) {
 	// Call in the Mountineers to gain drive-by access to the core's container
 	// live file system.
 	iedRuntimeMnt, err := mountineer.New(
 		model.NamespaceRef{fmt.Sprintf("/proc/%d/ns/mnt", pid)}, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot establish mountineer, reason: %w", err)
 	}
+	defer iedRuntimeMnt.Close()
 
 	dbpath, err := iedRuntimeMnt.Resolve(name)
 	if err != nil {
-		iedRuntimeMnt.Close()
-		return nil, err
+		return nil, fmt.Errorf("cannot determine full database path, reason: %w", err)
+	}
+
+	// Make a temporary copy of the database so we can open it successfully in
+	// all our cases.
+	origdbf, err := os.Open(dbpath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to open database, reason: %w", err)
+	}
+	defer func() { _ = origdbf.Close() }()
+	tmpdbf, err := os.CreateTemp("", "temp-db-copy-*")
+	if err != nil {
+		return nil, fmt.Errorf("unable to open database, reason: %w", err)
+	}
+	defer func() { _ = tmpdbf.Close() }()
+	if _, err := io.Copy(tmpdbf, origdbf); err != nil {
+		_ = os.Remove(tmpdbf.Name())
+		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
 
 	// As sql.Open might just "validate its parameters" and this might mean near
 	// to nothing, we explicitly ping the database in order to see that it is
 	// okay.
-	db, err := sqlx.Open(dbDriverName, dbpath+"?mode=ro")
-	if err == nil {
-		err = db.Ping()
-	}
+	dbpath = tmpdbf.Name()
+	_ = tmpdbf.Close()
+	db, err := sqlx.Open(dbDriverName, dbpath)
 	if err != nil {
-		iedRuntimeMnt.Close()
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
 		return nil, err
 	}
 
@@ -111,8 +141,8 @@ func open(name string, pid model.PIDType) (*AppEngineDB, error) {
 	// Success, now wrap the sql.DB object in our AppEngineDB object, so that we
 	// later correctly can clean up when the Close method gets called.
 	return &AppEngineDB{
-		iedRuntimeMnt: iedRuntimeMnt,
-		DB:            db,
+		DB:                 db,
+		copiedDatabasePath: dbpath,
 	}, nil
 }
 
@@ -120,12 +150,12 @@ func open(name string, pid model.PIDType) (*AppEngineDB, error) {
 // the helper resources required to read from an SQLite database in another
 // container.
 func (db *AppEngineDB) Close() error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
+	db.closeMu.Lock()
+	defer db.closeMu.Unlock()
 	err := db.DB.Close()
-	if db.iedRuntimeMnt != nil {
-		// The mountineer now can unmount and rest them horse.
-		db.iedRuntimeMnt.Close()
+	if db.copiedDatabasePath != "" {
+		_ = os.Remove(db.copiedDatabasePath)
+		db.copiedDatabasePath = ""
 	}
 	return err
 }

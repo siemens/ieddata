@@ -29,7 +29,7 @@ var _ = Describe("device info", func() {
 
 	It("accesses device information", func() {
 		db := Successful(Open("platformbox.db"))
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		m, err := db.DeviceInfo()
 		Expect(err).NotTo(HaveOccurred())
