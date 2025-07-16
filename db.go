@@ -14,7 +14,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
-	"github.com/thediveo/lxkns/ops/mountineer"
+	"github.com/thediveo/procfsroot"
 
 	// _ "github.com/mattn/go-sqlite3" // pull in "sqlite3" driver
 	_ "modernc.org/sqlite"
@@ -90,19 +90,12 @@ func sanitize(basename string) string {
 //
 // Well, what's good for the goose is good for the gander, so copy it is. Sigh.
 func open(name string, pid model.PIDType) (*AppEngineDB, error) {
-	// Call in the Mountineers to gain drive-by access to the core's container
-	// live file system.
-	iedRuntimeMnt, err := mountineer.New(
-		model.NamespaceRef{fmt.Sprintf("/proc/%d/ns/mnt", pid)}, nil)
-	if err != nil {
-		return nil, fmt.Errorf("cannot establish mountineer, reason: %w", err)
-	}
-	defer iedRuntimeMnt.Close()
-
-	dbpath, err := iedRuntimeMnt.Resolve(name)
+	rootpath := fmt.Sprintf("/proc/%d/root", pid)
+	dbpath, err := procfsroot.EvalSymlinks(name, rootpath, procfsroot.EvalFullPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine full database path, reason: %w", err)
 	}
+	dbpath = path.Join(rootpath, dbpath)
 
 	// Make a temporary copy of the database so we can open it successfully in
 	// all our cases.

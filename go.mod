@@ -11,9 +11,10 @@ require (
 	github.com/thediveo/fdooze v0.3.2
 	github.com/thediveo/lxkns v0.38.1
 	github.com/thediveo/morbyd v0.18.0
+	github.com/thediveo/procfsroot v1.0.2
 	github.com/thediveo/success v1.0.3
 	github.com/thediveo/whalewatcher v0.12.0
-	golang.org/x/sys v0.33.0
+	golang.org/x/sys v0.34.0
 	modernc.org/sqlite v1.38.0
 )
 
@@ -58,7 +59,6 @@ require (
 	github.com/thediveo/faf v0.2.0 // indirect
 	github.com/thediveo/go-mntinfo v1.0.3 // indirect
 	github.com/thediveo/ioctl v0.9.4 // indirect
-	github.com/thediveo/procfsroot v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.47.0 // indirect
 	go.opentelemetry.io/otel v1.35.0 // indirect

@@ -73,7 +73,7 @@ var _ = Describe("IED app engine database", func() {
 	})
 
 	It("fails for invalid container PID", func() {
-		Expect(OpenInPID("foo.db", 0)).Error().To(MatchError(MatchRegexp(`invalid mount namespace reference`)))
+		Expect(OpenInPID("foo.db", 0)).Error().To(MatchError(MatchRegexp(`no such file or directory`)))
 	})
 
 	It("fails for missing IE runtime container", func(ctx context.Context) {
