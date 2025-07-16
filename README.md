@@ -12,7 +12,7 @@
 ![goroutines](https://img.shields.io/badge/go%20routines-not%20leaking-success)
 ![file descriptors](https://img.shields.io/badge/file%20descriptors-not%20leaking-success)
 [![Go Report Card](https://goreportcard.com/badge/github.com/siemens/ieddata)](https://goreportcard.com/report/github.com/siemens/ieddata)
-![Coverage](https://img.shields.io/badge/Coverage-88.2%25-brightgreen)
+![Coverage](https://img.shields.io/badge/Coverage-88.7%25-brightgreen)
 
 `iedata` provides querying information about a Siemens Industrial Edge (virtual)
 device from an app inside the IE(v)D.
