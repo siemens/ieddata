@@ -6,6 +6,8 @@ package ieddata
 
 import (
 	"errors"
+	"reflect"
+	"slices"
 	"time"
 )
 
@@ -71,11 +73,53 @@ func (db *AppEngineDB) Apps() ([]App, error) {
 	}
 	defer rows.Close()
 
+	// Work around cznic/sqlite not fully supporting sqlx for the moment. For
+	// this, we need to map the query result column to their App struct fields.
+	// In particular, we map column indices (instead of names) to field indices.
+	// A field index < 0 indicates that the column does not match any App struct
+	// field.
+	cols, err := rows.Columns()
+	if err != nil {
+		return nil, err
+	}
+	appT := reflect.TypeOf(App{})
+	columnFieldIndices := make([]int, len(cols))
+	for columnIndex := range columnFieldIndices {
+		columnFieldIndices[columnIndex] = -1 // no corresponding field
+	}
+	for fieldIdx := range appT.NumField() {
+		columnName := appT.Field(fieldIdx).Tag.Get("db")
+		if columnName == "" {
+			columnName = FirstLower(appT.Field(fieldIdx).Name)
+		}
+		columnIdx := slices.Index(cols, columnName)
+		if columnIdx < 0 {
+			continue
+		}
+		columnFieldIndices[columnIdx] = fieldIdx
+	}
+
 	for rows.Next() {
 		var app App
-		if err := rows.StructScan(&app); err != nil {
+		/*
+			if err := rows.StructScan(&app); err != nil {
+				return nil, err
+			}
+		*/
+		appV := reflect.ValueOf(&app).Elem()
+		values := make([]any, len(cols))
+		for columnIdx := range values {
+			fieldIndex := columnFieldIndices[columnIdx]
+			if fieldIndex < 0 {
+				values[columnIdx] = new(any)
+				continue
+			}
+			values[columnIdx] = appV.Field(fieldIndex).Addr().Interface()
+		}
+		if err := rows.Scan(values...); err != nil {
 			return nil, err
 		}
+
 		if app.Id == "" {
 			return nil, errors.New("empty IE App identifier: did you open the correct data base?")
 		}

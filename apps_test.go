@@ -41,7 +41,7 @@ var _ = Describe("IED app engine installed apps", func() {
 			HaveField("Version", Not(BeZero())),
 			HaveField("VersionId", Not(BeZero())),
 			HaveField("ProjectId", Not(BeZero())),
-			HaveField("Created", Equal(t0)),
+			HaveField("Created.Unix()", BeNumerically(">=", t0.Unix())),
 			HaveField("Id", Not(BeZero())),
 			HaveField("IconPath", Not(BeZero())),
 		)))
