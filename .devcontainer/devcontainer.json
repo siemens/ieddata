@@ -1,0 +1,19 @@
+{
+    "name": "reproducer for cznic/sqlite issue #214",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+    "features": {
+        "ghcr.io/thediveo/devcontainer-features/go-mod-upgrade:0": {}
+    },
+    "remoteEnv": {
+        "GOPATH": "/home/vscode/go",
+        "PATH": "/home/vscode/go/bin:/go/bin:/usr/local/go/bin:${localEnv:PATH}"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "stkb.rewrap",
+                "mhutchie.git-graph"
+            ]
+        }
+    }
+}
