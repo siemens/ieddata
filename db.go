@@ -114,6 +114,19 @@ func open(name string, pid model.PIDType) (*AppEngineDB, error) {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
 
+	// When available, make a copy of the accompanying WAL file also.
+	if walf, err := os.Open(dbpath + "-wal"); err == nil {
+		defer func() { _ = walf.Close() }()
+		if tmpwalf, err := os.Create(tmpdbf.Name() + "-wal"); err == nil {
+			defer func() { _ = tmpwalf.Close() }()
+			if _, err := io.Copy(tmpwalf, walf); err != nil {
+				_ = os.Remove(tmpwalf.Name())
+			}
+			_ = tmpwalf.Close()
+		}
+		_ = walf.Close()
+	}
+
 	// As sql.Open might just "validate its parameters" and this might mean near
 	// to nothing, we explicitly ping the database in order to see that it is
 	// okay.
