@@ -21,8 +21,7 @@ type Item struct {
 
 func TestDB(t *testing.T) {
 	_ = os.Remove(testDatabaseFile)
-	// FIXME: defer func() { _ = os.Remove(canaryDatabaseFile) }()
-	db, err := sqlx.Open(DriverName, testDatabaseFile)
+	db, err := sqlx.Open(DriverName, testDatabaseFile+"?_inttotime=true")
 	if err != nil {
 		t.Fatalf("cannot open database using driver %s, reason: %s", DriverName, err.Error())
 	}
