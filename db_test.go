@@ -6,13 +6,16 @@ package ieddata
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/sys/unix"
+	"modernc.org/sqlite/vfs"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -87,7 +90,7 @@ var _ = Describe("IED app engine database", func() {
 
 	It("fails for missing/invalid IED app engine database", func() {
 		Expect(Open("foo.db")).Error().To(MatchError(ContainSubstring("/root/data")))
-		Expect(Open("not.a.db")).Error().To(MatchError(ContainSubstring("unable to open database")))
+		Expect(Open("not.a.db")).Error().To(MatchError(ContainSubstring("nable to open database")))
 	})
 
 	It("accesses the app engine database", func() {
@@ -104,6 +107,51 @@ var _ = Describe("IED app engine database", func() {
 		}
 		Expect(m).To(HaveKeyWithValue("deviceName", "iedx12345"))
 		Expect(m).To(HaveKeyWithValue("ownerEmail", "foo.bar@example.com"))
+	})
+
+	Context("doing weird things with os.Root on /proc/PID/root", func() {
+
+		It("reads a db via vfs on /proc/PID/root", func() {
+			By("creating a temporary directory for a test database")
+			tmpdbdir := Successful(os.MkdirTemp("", "canarydb-*"))
+			defer func() { _ = os.RemoveAll(tmpdbdir) }()
+
+			const dbname = "canary.db"
+
+			By("creating the testing database")
+			func() {
+				db := Successful(sql.Open(dbDriverName,
+					"file:"+path.Join(tmpdbdir, dbname)))
+				defer func() { Expect(db.Close()).To(Succeed()) }()
+
+				Expect(db.Exec("create table 'test' ('name' varchar(32) not null, primary key('name') )")).
+					Error().NotTo(HaveOccurred())
+				Expect(db.Exec("insert into 'test' (name) values ('foobar')")).
+					Error().NotTo(HaveOccurred())
+			}()
+
+			By("opening the db via VFS")
+			root := Successful(os.OpenRoot(
+				path.Join("/proc", strconv.FormatInt(int64(os.Getpid()), 10), "root", tmpdbdir)))
+			defer func() { Expect(root.Close()).To(Succeed()) }()
+
+			vfsid, sqlvfs := Successful2R(vfs.New(root.FS()))
+			defer func() { Expect(sqlvfs.Close()).To(Succeed()) }()
+
+			db := Successful(sqlx.Open(dbDriverName, dbname+"?vfs="+vfsid))
+			defer func() { Expect(db.Close()).To(Succeed()) }()
+
+			Expect(db.Ping()).To(Succeed())
+
+			By("reading a row from the read-only db")
+			rows := Successful(db.Query("select * from 'test'"))
+			defer func() { Expect(rows.Close()).To(Succeed()) }()
+			Expect(rows.Next()).To(BeTrue())
+			var name string
+			Expect(rows.Scan(&name)).To(Succeed())
+			Expect(name).To(Equal("foobar"))
+		})
+
 	})
 
 })

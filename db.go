@@ -6,7 +6,6 @@ package ieddata
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"regexp"
@@ -15,7 +14,9 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/procfsroot"
-	_ "modernc.org/sqlite"
+
+	"modernc.org/sqlite"
+	"modernc.org/sqlite/vfs"
 )
 
 // PlatformBoxDb is the file name of the platform box database.
@@ -78,63 +79,34 @@ func sanitize(basename string) string {
 // it in some tests without the need for a correctly set-up fake edge runtime
 // container. Please note that any caller must have sanitized the name parameter
 // first.
-//
-// As it turns out there are some situations which we don't yet fully understand
-// but that causes opening the database via a proc path to fail, even if it
-// succeeds in other situations. Interestingly, the termdbms sqlite3 TUI works
-// in all these situation and an analysis of its source code base reveals that
-// it simply makes a copy of the original database, see
-// https://github.com/mathaou/termdbms/blob/be6f397196077cc7c9ced86e6460470e3b223f3e/main.go#L132.
-//
-// Well, what's good for the goose is good for the gander, so copy it is. Sigh.
 func open(name string, pid model.PIDType) (*AppEngineDB, error) {
 	rootpath := fmt.Sprintf("/proc/%d/root", pid)
 	dbpath, err := procfsroot.EvalSymlinks(name, rootpath, procfsroot.EvalFullPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine full database path, reason: %w", err)
 	}
-	dbpath = path.Join(rootpath, dbpath)
 
-	// Make a temporary copy of the database so we can open it successfully in
-	// all our cases.
-	origdbf, err := os.Open(dbpath)
+	root, err := os.OpenRoot(rootpath)
 	if err != nil {
-		return nil, fmt.Errorf("unable to open database, reason: %w", err)
+		return nil, fmt.Errorf("cannot open root, reason: %w", err)
 	}
-	defer func() { _ = origdbf.Close() }()
-	tmpdbf, err := os.CreateTemp("", "temp-db-copy-*")
+	defer func() { _ = root.Close() }()
+	vfsid, sqlvfs, err := vfs.New(root.FS())
 	if err != nil {
-		return nil, fmt.Errorf("unable to open database, reason: %w", err)
+		return nil, fmt.Errorf("cannot create sqlite VFS, reason: %w", err)
 	}
-	defer func() { _ = tmpdbf.Close() }()
-	if _, err := io.Copy(tmpdbf, origdbf); err != nil {
-		_ = os.Remove(tmpdbf.Name())
-		return nil, fmt.Errorf("unable to open database, reason: %w", err)
-	}
+	defer func() { _ = sqlvfs.Close() }()
 
-	// When available, make a copy of the accompanying WAL file also.
-	if walf, err := os.Open(dbpath + "-wal"); err == nil {
-		defer func() { _ = walf.Close() }()
-		if tmpwalf, err := os.Create(tmpdbf.Name() + "-wal"); err == nil {
-			defer func() { _ = tmpwalf.Close() }()
-			if _, err := io.Copy(tmpwalf, walf); err != nil {
-				_ = os.Remove(tmpwalf.Name())
-			}
-			_ = tmpwalf.Close()
-		}
-		_ = walf.Close()
-	}
-
-	// As sql.Open might just "validate its parameters" and this might mean near
-	// to nothing, we explicitly ping the database in order to see that it is
-	// okay.
-	dbpath = tmpdbf.Name()
-	_ = tmpdbf.Close()
-	db, err := sqlx.Open(dbDriverName, dbpath)
+	dbpath = "./" + path.Join("." /* sic! */, dbpath)
+	db, err := sqlx.Open(dbDriverName, dbpath+"?vfs="+vfsid)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
+		if sqlerr, ok := err.(*sqlite.Error); ok {
+			return nil, fmt.Errorf("ping database (%s)%q: sqlite error: %s",
+				rootpath, dbpath, sqlite.ErrorCodeString[sqlerr.Code()])
+		}
 		return nil, err
 	}
 

@@ -9,6 +9,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,12 +27,19 @@ var _ = Describe("IED app engine installed apps", func() {
 		})
 	})
 
-	It("reads installed app information", func() {
+	It("self-tests db", func() {
+		db := Successful(sqlx.Open(dbDriverName,
+			path.Join(Successful(os.Getwd()), "tests/sqlite-alpine-appengine-db/test-apps-and-device.db?mode=ro")))
+		defer func() { Expect(db.Close()).To(Succeed()) }()
+		Expect(db.Ping()).To(Succeed())
+	})
+
+	FIt("reads installed app information", func() {
 		// Use a local test database, so we don't need to rely on an (fake) edge
 		// core running.
 		cwd := Successful(os.Getwd())
 		db := Successful(open(path.Join(cwd, "tests/sqlite-alpine-appengine-db/test-apps-and-device.db"), model.PIDType(os.Getpid())))
-		defer func() { _ = db.Close() }()
+		defer func() { Expect(db.Close()).To(Succeed()) }()
 
 		apps := Successful(db.Apps())
 		Expect(apps).To(HaveLen(4))
