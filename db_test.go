@@ -6,6 +6,7 @@ package ieddata
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"golang.org/x/sys/unix"
+	"modernc.org/sqlite/vfs"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -104,6 +106,45 @@ var _ = Describe("IED app engine database", func() {
 		}
 		Expect(m).To(HaveKeyWithValue("deviceName", "iedx12345"))
 		Expect(m).To(HaveKeyWithValue("ownerEmail", "foo.bar@example.com"))
+	})
+
+	FContext("doing stupid things with os.Root on /proc/pid/root", func() {
+
+		It("works", func() {
+			By("creating a temporary directory for a test database")
+			tmpdbdir := Successful(os.MkdirTemp("", "canarydb-*"))
+			defer os.RemoveAll(tmpdbdir)
+
+			const dbname = "canary.db"
+
+			By("creating the testing database")
+			func() {
+				db := Successful(sql.Open(dbDriverName,
+					"file:"+path.Join(tmpdbdir, dbname)))
+				defer db.Close()
+
+				Expect(db.Exec("create table 'test' ('name' varchar(32) not null, primary key('name') )")).
+					Error().NotTo(HaveOccurred())
+				Expect(db.Exec("insert into 'test' (name) values ('foobar')")).
+					Error().NotTo(HaveOccurred())
+			}()
+
+			By("opening and reading the testing database via VFS")
+			root := Successful(os.OpenRoot(path.Join("/proc/1/root", tmpdbdir)))
+			defer root.Close()
+			vfsid, sqlvfs := Successful2R(vfs.New(root.FS()))
+			defer sqlvfs.Close()
+			db := Successful(sql.Open(dbDriverName, dbname+"?vfs="+vfsid))
+			defer db.Close()
+
+			rows := Successful(db.Query("select * from 'test'"))
+			defer rows.Close()
+			Expect(rows.Next()).To(BeTrue())
+			var name string
+			Expect(rows.Scan(&name)).To(Succeed())
+			Expect(name).To(Equal("foobar"))
+		})
+
 	})
 
 })
