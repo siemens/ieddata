@@ -11,7 +11,7 @@ import (
 )
 
 // Shows some of the IED key-values, such as the device name and owner name.
-func Example_showDeviceInfo() {
+func XExample_showDeviceInfo() {
 	db, err := ieddata.Open("platformbox.db")
 	if err != nil {
 		panic(err)

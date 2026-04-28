@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thediveo/morbyd"
-	"github.com/thediveo/morbyd/build"
-	"github.com/thediveo/morbyd/exec"
-	"github.com/thediveo/morbyd/run"
-	"github.com/thediveo/morbyd/session"
+	"github.com/thediveo/morbyd/v2"
+	"github.com/thediveo/morbyd/v2/build"
+	"github.com/thediveo/morbyd/v2/exec"
+	"github.com/thediveo/morbyd/v2/run"
+	"github.com/thediveo/morbyd/v2/session"
 	"golang.org/x/sys/unix"
 
 	. "github.com/onsi/ginkgo/v2"
