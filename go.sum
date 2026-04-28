@@ -229,6 +229,8 @@ github.com/thediveo/go-mntinfo v1.0.4 h1:r83XYnw/wa4gMbLPmwgJ87yLBz5ug1Xuw80LyJe
 github.com/thediveo/go-mntinfo v1.0.4/go.mod h1:Txds40MGTbc/30cm0xyTCXpfXFs9Tx8HMbI6xqI6vn0=
 github.com/thediveo/ioctl v0.9.4 h1:HvEW9BW0qkyDXaGqp24Vb4sFrfN5718WLx6VLV2uTxU=
 github.com/thediveo/ioctl v0.9.4/go.mod h1:2k2Us0WLUrBRJWmNo5b0JCg1HicqxxoxB8wKml+e0Eo=
+github.com/thediveo/lxkns v0.45.0 h1:Bjh7kkp/Xh3XbVrn+rjX13G7lD0swxIvfr0YPzyjF7M=
+github.com/thediveo/lxkns v0.45.0/go.mod h1:XoFun3TnlTu3oCRLoU51i0hnuFLLDvbY3FyvSH8sg9M=
 github.com/thediveo/lxkns v0.45.1 h1:1lYP77bpO+x3jSUuaTsnq25NZW8cIOrZgeCN4CBswaI=
 github.com/thediveo/lxkns v0.45.1/go.mod h1:vNCHM5hND8g8B3QGM3B2iyZJGNGKF/2OG2GrcTIp3FY=
 github.com/thediveo/morbyd/v2 v2.0.0 h1:8eojQ+nQL/711/4ghp84Qw9lIpcXTLO9L9QI7AgHdXc=

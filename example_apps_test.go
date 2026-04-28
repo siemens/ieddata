@@ -14,12 +14,12 @@ import (
 
 // List the Industrial Edge Apps installed on this IED, with their titles and
 // app IDs.
-func XExample_listInstalledApps() {
+func Example_listInstalledApps() {
 	db, err := ieddata.Open("platformbox.db")
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	apps, err := db.Apps()
 	if err != nil {

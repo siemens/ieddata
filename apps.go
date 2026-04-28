@@ -71,7 +71,7 @@ func (db *AppEngineDB) Apps() ([]App, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Work around cznic/sqlite not fully supporting sqlx for the moment. For
 	// this, we need to map the query result column to their App struct fields.

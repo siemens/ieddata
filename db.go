@@ -15,8 +15,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/procfsroot"
-
-	// _ "github.com/mattn/go-sqlite3" // pull in "sqlite3" driver
 	_ "modernc.org/sqlite"
 )
 

@@ -71,8 +71,9 @@ var _ = BeforeSuite(func(ctx context.Context) {
 		_ = unix.Kill(Successful(cmdsess.PID(ctx)), unix.SIGINT)
 	})
 	Expect(fmt.Fprint(pipew, "PRAGMA journal_mode=WAL;\n")).Error().To(Succeed())
-	Eventually(fmt.Sprintf("/proc/%d/root/%s/%s",
-		Successful(fakecore.PID(ctx)), dbBaseDir, PlatformBoxDb+"-wal")).
+	Eventually(func() string {
+		return fmt.Sprintf("/proc/%d/root/%s/%s", Successful(fakecore.PID(ctx)), dbBaseDir, PlatformBoxDb+"-wal")
+	}).
 		Within(5 * time.Second).ProbeEvery(100 * time.Millisecond).To(BeAnExistingFile())
 })
 

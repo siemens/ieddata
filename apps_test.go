@@ -31,7 +31,7 @@ var _ = Describe("IED app engine installed apps", func() {
 		// core running.
 		cwd := Successful(os.Getwd())
 		db := Successful(open(path.Join(cwd, "tests/sqlite-alpine-appengine-db/test-apps-and-device.db"), model.PIDType(os.Getpid())))
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		apps := Successful(db.Apps())
 		Expect(apps).To(HaveLen(4))
