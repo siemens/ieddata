@@ -16,7 +16,7 @@ func Example_showDeviceInfo() {
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	di, err := db.DeviceInfo()
 	if err != nil {

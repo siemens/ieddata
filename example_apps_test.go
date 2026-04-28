@@ -19,7 +19,7 @@ func Example_listInstalledApps() {
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	apps, err := db.Apps()
 	if err != nil {

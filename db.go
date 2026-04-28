@@ -15,8 +15,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/procfsroot"
-
-	// _ "github.com/mattn/go-sqlite3" // pull in "sqlite3" driver
 	_ "modernc.org/sqlite"
 )
 
@@ -112,6 +110,19 @@ func open(name string, pid model.PIDType) (*AppEngineDB, error) {
 	if _, err := io.Copy(tmpdbf, origdbf); err != nil {
 		_ = os.Remove(tmpdbf.Name())
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
+	}
+
+	// When available, make a copy of the accompanying WAL file also.
+	if walf, err := os.Open(dbpath + "-wal"); err == nil {
+		defer func() { _ = walf.Close() }()
+		if tmpwalf, err := os.Create(tmpdbf.Name() + "-wal"); err == nil {
+			defer func() { _ = tmpwalf.Close() }()
+			if _, err := io.Copy(tmpwalf, walf); err != nil {
+				_ = os.Remove(tmpwalf.Name())
+			}
+			_ = tmpwalf.Close()
+		}
+		_ = walf.Close()
 	}
 
 	// As sql.Open might just "validate its parameters" and this might mean near

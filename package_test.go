@@ -7,13 +7,18 @@ package ieddata
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"path"
 	"testing"
+	"time"
 
-	"github.com/thediveo/morbyd"
-	"github.com/thediveo/morbyd/build"
-	"github.com/thediveo/morbyd/run"
-	"github.com/thediveo/morbyd/session"
+	"github.com/thediveo/morbyd/v2"
+	"github.com/thediveo/morbyd/v2/build"
+	"github.com/thediveo/morbyd/v2/exec"
+	"github.com/thediveo/morbyd/v2/run"
+	"github.com/thediveo/morbyd/v2/session"
+	"golang.org/x/sys/unix"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -53,6 +58,23 @@ var _ = BeforeSuite(func(ctx context.Context) {
 	})
 	Expect(fmt.Sprintf("/proc/%d/root/%s/%s",
 		Successful(fakecore.PID(ctx)), dbBaseDir, PlatformBoxDb)).To(BeAnExistingFile())
+
+	piper, pipew := io.Pipe()
+	cmdsess := Successful(fakecore.Exec(ctx,
+		exec.Command("sqlite3", path.Join(dbBaseDir, PlatformBoxDb)),
+		exec.WithCombinedOutput(GinkgoWriter),
+		exec.WithTTY(),
+		exec.WithInput(piper)))
+	DeferCleanup(func(ctx context.Context) {
+		_ = pipew.Close()
+		_ = piper.Close()
+		_ = unix.Kill(Successful(cmdsess.PID(ctx)), unix.SIGINT)
+	})
+	Expect(fmt.Fprint(pipew, "PRAGMA journal_mode=WAL;\n")).Error().To(Succeed())
+	Eventually(func() string {
+		return fmt.Sprintf("/proc/%d/root/%s/%s", Successful(fakecore.PID(ctx)), dbBaseDir, PlatformBoxDb+"-wal")
+	}).
+		Within(5 * time.Second).ProbeEvery(100 * time.Millisecond).To(BeAnExistingFile())
 })
 
 func TestIEDData(t *testing.T) {

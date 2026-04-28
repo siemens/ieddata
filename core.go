@@ -9,7 +9,7 @@ import (
 	"errors"
 
 	"github.com/thediveo/lxkns/model"
-	"github.com/thediveo/whalewatcher/watcher/moby"
+	"github.com/thediveo/whalewatcher/v2/watcher/moby"
 )
 
 // EdgeIotCoreContainerName is the name of the IED runtime container.
