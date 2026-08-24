@@ -82,7 +82,7 @@ func (db *AppEngineDB) Apps() ([]App, error) {
 	if err != nil {
 		return nil, err
 	}
-	appT := reflect.TypeOf(App{})
+	appT := reflect.TypeFor[App]()
 	columnFieldIndices := make([]int, len(cols))
 	for columnIndex := range columnFieldIndices {
 		columnFieldIndices[columnIndex] = -1 // no corresponding field
