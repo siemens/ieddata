@@ -59,7 +59,14 @@ func Open(dbname string) (*AppEngineDB, error) {
 // IED's runtime container PID is already known, such as from an lxkns
 // discovery, as so to skip the IE runtime container discovery.
 func OpenInPID(dbname string, pid model.PIDType) (*AppEngineDB, error) {
-	return open(path.Join(dbBaseDir, sanitize(dbname)), pid)
+	return OpenPathInPID(path.Join(dbBaseDir, sanitize(dbname)), pid)
+}
+
+// OpenPathInPID works like OpenInPID but take a full path and database name as
+// well as a PID within which to resolve the pathname. Use this primarily in
+// (unit) tests where spinning up a fake IED runtime container is overkill.
+func OpenPathInPID(pathname string, pid model.PIDType) (*AppEngineDB, error) {
+	return open(pathname, pid)
 }
 
 var onlyAlphaNumsAndMore = regexp.MustCompile(`[^a-zA-Z0-9\-_.]+`)
@@ -87,9 +94,9 @@ func sanitize(basename string) string {
 // https://github.com/mathaou/termdbms/blob/be6f397196077cc7c9ced86e6460470e3b223f3e/main.go#L132.
 //
 // Well, what's good for the goose is good for the gander, so copy it is. Sigh.
-func open(name string, pid model.PIDType) (*AppEngineDB, error) {
+func open(pathname string, pid model.PIDType) (*AppEngineDB, error) {
 	rootpath := fmt.Sprintf("/proc/%d/root", pid)
-	dbpath, err := procfsroot.EvalSymlinks(name, rootpath, procfsroot.EvalFullPath)
+	dbpath, err := procfsroot.EvalSymlinks(pathname, rootpath, procfsroot.EvalFullPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot determine full database path, reason: %w", err)
 	}

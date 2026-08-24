@@ -20,5 +20,6 @@ func (db *AppEngineDB) DeviceInfo() (map[string]string, error) {
 		}
 		devinfo[key] = value
 	}
+	_ = rows.Err()
 	return devinfo, nil
 }
