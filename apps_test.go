@@ -6,10 +6,10 @@ package ieddata
 
 import (
 	"os"
-	"path"
+	"path/filepath"
 	"time"
 
-	"github.com/thediveo/lxkns/model"
+	"github.com/thediveo/procfsroot/wormholes"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -29,8 +29,9 @@ var _ = Describe("IED app engine installed apps", func() {
 	It("reads installed app information", func() {
 		// Use a local test database, so we don't need to rely on an (fake) edge
 		// core running.
-		cwd := Successful(os.Getwd())
-		db := Successful(open(path.Join(cwd, "tests/sqlite-alpine-appengine-db/test-apps-and-device.db"), model.PIDType(os.Getpid())))
+		vfs := wormholes.New(os.Getpid())
+		db := Successful(open(vfs,
+			Successful(filepath.Abs("tests/sqlite-alpine-appengine-db/test-apps-and-device.db"))[1:]))
 		defer func() { _ = db.Close() }()
 
 		apps := Successful(db.Apps())

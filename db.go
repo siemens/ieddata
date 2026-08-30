@@ -7,14 +7,16 @@ package ieddata
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
-	"github.com/thediveo/procfsroot"
+	"github.com/thediveo/procfsroot/wormholes"
 	_ "modernc.org/sqlite"
 )
 
@@ -65,8 +67,19 @@ func OpenInPID(dbname string, pid model.PIDType) (*AppEngineDB, error) {
 // OpenPathInPID works like OpenInPID but take a full path and database name as
 // well as a PID within which to resolve the pathname. Use this primarily in
 // (unit) tests where spinning up a fake IED runtime container is overkill.
+//
+// Deprecated: use [OpenFS] with a [wormholes.FS] instead.
+// instead.
 func OpenPathInPID(pathname string, pid model.PIDType) (*AppEngineDB, error) {
-	return open(pathname, pid)
+	pathname = strings.TrimPrefix(pathname, "/")
+	vfs := wormholes.New(int(pid))
+	return open(vfs, pathname)
+}
+
+// OpenFS works like Open but opens the specified database in the passed
+// fs.FS.
+func OpenFS(fsys fs.FS, pathname string) (*AppEngineDB, error) {
+	return open(fsys, pathname)
 }
 
 var onlyAlphaNumsAndMore = regexp.MustCompile(`[^a-zA-Z0-9\-_.]+`)
@@ -80,11 +93,8 @@ func sanitize(basename string) string {
 	return noDotDots.ReplaceAllString(onlyAlphaNumsAndMore.ReplaceAllString(basename, "_"), "_")
 }
 
-// open actually opens the SQLite database read-only specified by its full path,
-// with the help of a mountineer. Separating this out gives us a chance to reuse
-// it in some tests without the need for a correctly set-up fake edge runtime
-// container. Please note that any caller must have sanitized the name parameter
-// first.
+// open actually opens the SQLite database read-only at the given path (that
+// must follow fs.FS semantics and thus not start with "/") on the passed fs.FS.
 //
 // As it turns out there are some situations which we don't yet fully understand
 // but that causes opening the database via a proc path to fail, even if it
@@ -94,17 +104,10 @@ func sanitize(basename string) string {
 // https://github.com/mathaou/termdbms/blob/be6f397196077cc7c9ced86e6460470e3b223f3e/main.go#L132.
 //
 // Well, what's good for the goose is good for the gander, so copy it is. Sigh.
-func open(pathname string, pid model.PIDType) (*AppEngineDB, error) {
-	rootpath := fmt.Sprintf("/proc/%d/root", pid)
-	dbpath, err := procfsroot.EvalSymlinks(pathname, rootpath, procfsroot.EvalFullPath)
-	if err != nil {
-		return nil, fmt.Errorf("cannot determine full database path, reason: %w", err)
-	}
-	dbpath = path.Join(rootpath, dbpath)
-
+func open(fsys fs.FS, pathname string) (*AppEngineDB, error) {
 	// Make a temporary copy of the database so we can open it successfully in
 	// all our cases.
-	origdbf, err := os.Open(dbpath)
+	origdbf, err := fsys.Open(pathname)
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
@@ -120,7 +123,7 @@ func open(pathname string, pid model.PIDType) (*AppEngineDB, error) {
 	}
 
 	// When available, make a copy of the accompanying WAL file also.
-	if walf, err := os.Open(dbpath + "-wal"); err == nil {
+	if walf, err := fsys.Open(pathname + "-wal"); err == nil {
 		defer func() { _ = walf.Close() }()
 		if tmpwalf, err := os.Create(tmpdbf.Name() + "-wal"); err == nil {
 			defer func() { _ = tmpwalf.Close() }()
@@ -135,7 +138,7 @@ func open(pathname string, pid model.PIDType) (*AppEngineDB, error) {
 	// As sql.Open might just "validate its parameters" and this might mean near
 	// to nothing, we explicitly ping the database in order to see that it is
 	// okay.
-	dbpath = tmpdbf.Name()
+	dbpath := tmpdbf.Name()
 	_ = tmpdbf.Close()
 	db, err := sqlx.Open(dbDriverName, dbpath)
 	if err != nil {
