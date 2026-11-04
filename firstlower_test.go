@@ -16,6 +16,8 @@ var _ = Describe("IED app engine database column names", func() {
 		Expect(FirstLower("1FooBar")).To(Equal("1FooBar"))
 		Expect(FirstLower("fooBar")).To(Equal("fooBar"))
 		Expect(FirstLower("")).To(Equal(""))
+		Expect(FirstLower("ÄÖÜ")).To(Equal("äÖÜ"))
+		Expect(FirstLower("\xffFoo")).To(Equal("\xffFoo"))
 	})
 
 })
