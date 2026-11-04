@@ -125,6 +125,9 @@ func (db *AppEngineDB) Apps() ([]App, error) {
 		}
 		apps = append(apps, app)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	return apps, nil
 }
