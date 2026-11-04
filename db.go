@@ -127,24 +127,27 @@ func open(fsys fs.FS, pathname string) (_ *AppEngineDB, err error) {
 		_ = os.Remove(dbpath + "-wal")
 	}
 
-	// As sql.Open might just "validate its parameters" and this might mean near
-	// to nothing, we explicitly ping the database in order to see that it is
-	// okay.
-	db, err := sqlx.Open(dbDriverName, dbpath)
+	return connect(dbpath, tmpDir)
+}
+
+// connect opens the database specified by dsn and checks that it actually is a
+// database. tmpDir gets removed when closing the database.
+func connect(dsn, tmpDir string) (*AppEngineDB, error) {
+	db, err := sqlx.Open(dbDriverName, dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
-	if err := db.Ping(); err != nil {
+	// Unlike Ping, this fails for files that aren't databases.
+	var schemaVersion int
+	if err := db.QueryRow("PRAGMA schema_version").Scan(&schemaVersion); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
 
 	// Install a default mapper function that preserves camelCase, with the
 	// first letter always being lowercase.
 	db.MapperFunc(FirstLower)
 
-	// Success, now wrap the sql.DB object in our AppEngineDB object, so that we
-	// later correctly can clean up when the Close method gets called.
 	return &AppEngineDB{
 		DB:     db,
 		tmpDir: tmpDir,
