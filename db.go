@@ -5,6 +5,7 @@
 package ieddata
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/lxkns/model"
@@ -29,6 +31,10 @@ const dbBaseDir = "/data/app_engine/db"
 
 // Name of DB driver.
 const dbDriverName = "sqlite"
+
+// openTimeout limits how long Open waits for discovering the IED runtime
+// container.
+const openTimeout = 30 * time.Second
 
 // AppEngineDB implements access to an IED app engine host database.
 type AppEngineDB struct {
@@ -47,10 +53,23 @@ type AppEngineDB struct {
 //
 // Open hides the details of discovering the IED runtime container in a way that
 // then gives direct file system access to the app engine DBs inside this
-// container.
+// container. Open gives up discovering the IED runtime container after 30s;
+// use [OpenCtx] for a different timeout or cancellation.
 func Open(dbname string) (*AppEngineDB, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
+	defer cancel()
+	return OpenCtx(ctx, dbname)
+}
+
+// OpenCtx works like Open, but uses the passed context instead of a 30s timeout
+// for discovering the IED runtime container.
+//
+// The context covers only this discovery, not opening the database itself nor
+// any queries on the returned database; cancelling the context after OpenCtx
+// returned has no effect on the returned database.
+func OpenCtx(ctx context.Context, dbname string) (*AppEngineDB, error) {
 	// no core, no cigar.
-	corePID, err := edgeCoreContainerPID()
+	corePID, err := edgeCoreContainerPID(ctx)
 	if err != nil {
 		return nil, err
 	}
