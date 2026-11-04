@@ -6,9 +6,11 @@ package ieddata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,6 +43,9 @@ const openTimeout = 30 * time.Second
 const maxCopyAttempts = 3
 
 // AppEngineDB implements access to an IED app engine host database.
+//
+// Always use [AppEngineDB.Close] instead of the embedded DB's Close, as only
+// the former removes the temporary database copy.
 type AppEngineDB struct {
 	*sqlx.DB
 	tmpDir  string // holds the database copy and its WAL/SHM files
@@ -48,12 +53,12 @@ type AppEngineDB struct {
 }
 
 // Open returns a new database “connection” to the specified app engine DB, such
-// as “platformboxdb”, or an error, if neither the IED runtime container nor its
+// as “platformbox.db”, or an error, if neither the IED runtime container nor its
 // app engine database(s) could be located.
 //
-// The database name is sanitizied by keeping only alpha-numerically (ASCII)
-// characters, as well as dots “.” (but not “..”), dashes “-”, and underscores
-// “_”.
+// The database name must consist only of ASCII letters and digits, dots “.”
+// (but not “..”), dashes “-”, and underscores “_”; otherwise, Open returns
+// an error wrapping [ErrInvalidDBName].
 //
 // Open hides the details of discovering the IED runtime container in a way that
 // then gives direct file system access to the app engine DBs inside this
@@ -73,21 +78,57 @@ func Open(dbname string) (*AppEngineDB, error) {
 // The context covers only this discovery, not opening the database itself nor
 // any queries on the returned database; cancelling the context after OpenCtx
 // returned has no effect on the returned database.
-func OpenCtx(ctx context.Context, dbname string) (*AppEngineDB, error) {
+func OpenCtx(ctx context.Context, dbname string, opts ...Option) (*AppEngineDB, error) {
+	if err := checkDBName(dbname); err != nil {
+		return nil, err
+	}
+	options := options{dockerHost: defaultDockerHost}
+	for _, opt := range opts {
+		opt(&options)
+	}
 	// no core, no cigar.
-	corePID, err := edgeCoreContainerPID(ctx)
+	corePID, err := edgeCoreContainerPID(ctx, options.dockerHost)
 	if err != nil {
 		return nil, err
 	}
 	return OpenInPID(dbname, corePID)
 }
 
+// Option configures [OpenCtx].
+type Option func(*options)
+
+type options struct {
+	dockerHost string
+}
+
+// WithDockerHost sets the Docker API endpoint for discovering the IED runtime
+// container, such as “unix:///run/docker.sock”. It defaults to
+// “unix:///proc/1/root/run/docker.sock”, that is, the host's Docker socket as
+// seen from within the initial PID namespace.
+func WithDockerHost(host string) Option {
+	return func(o *options) { o.dockerHost = host }
+}
+
 // OpenInPID works like Open, but additionally requires the PID of the container
 // with the app engine DB(s) to be explicitly specified. Use OpenInPID when the
 // IED's runtime container PID is already known, such as from an lxkns
 // discovery, as so to skip the IE runtime container discovery.
+//
+// As Open creates a new container engine watcher each time to discover the IED
+// runtime container, callers that open databases often and already run their
+// own [github.com/thediveo/whalewatcher/v2/watcher.Watcher] should look up the
+// IED runtime container themselves instead:
+//
+//	core := w.Portfolio().Container(ieddata.EdgeIotCoreContainerName)
+//	if core == nil {
+//		// no IED runtime container (yet)
+//	}
+//	db, err := ieddata.OpenInPID(ieddata.PlatformBoxDb, model.PIDType(core.PID))
 func OpenInPID(dbname string, pid model.PIDType) (*AppEngineDB, error) {
-	return OpenPathInPID(path.Join(dbBaseDir, sanitize(dbname)), pid)
+	if err := checkDBName(dbname); err != nil {
+		return nil, err
+	}
+	return OpenPathInPID(path.Join(dbBaseDir, dbname), pid)
 }
 
 // OpenPathInPID works like OpenInPID but takes a full path and database name as
@@ -104,21 +145,28 @@ func OpenPathInPID(pathname string, pid model.PIDType) (*AppEngineDB, error) {
 //
 // The copy, including any WAL file, is a snapshot taken at opening time, so
 // later changes to the database aren't visible. When the database changes
-// while being copied, OpenFS retries copying a few times. The copy is placed in
-// [os.TempDir] and only removed when calling [AppEngineDB.Close].
+// while being copied, OpenFS retries copying a few times, finally using the
+// last copy anyway: SQLite ignores an incompletely copied WAL tail, and a badly
+// torn database most likely fails opening. The copy is placed in [os.TempDir]
+// and only removed when calling [AppEngineDB.Close]; copies left behind by
+// crashed processes get removed when opening the first database.
 func OpenFS(fsys fs.FS, pathname string) (*AppEngineDB, error) {
 	return open(fsys, pathname)
 }
 
-var onlyAlphaNumsAndMore = regexp.MustCompile(`[^a-zA-Z0-9\-_.]+`)
-var noDotDots = regexp.MustCompile(`(\.\.)+`)
+// ErrInvalidDBName indicates a database name with characters other than ASCII
+// letters and digits, “.”, “-”, and “_”, or containing “..”.
+var ErrInvalidDBName = errors.New("invalid database name")
 
-// sanitize the specified basename so it does not contain any characters
-// triggering path traversal or SQLite driver options. Sanitize keeps only
-// alpha-numerically (ASCII) characters, as well as dots “.” (but not “..”),
-// dashes “-”, and underscores “_”.
-func sanitize(basename string) string {
-	return noDotDots.ReplaceAllString(onlyAlphaNumsAndMore.ReplaceAllString(basename, "_"), "_")
+var validDBName = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+// checkDBName returns an error wrapping ErrInvalidDBName if the specified
+// database name could cause path traversal or set SQLite driver options.
+func checkDBName(dbname string) error {
+	if !validDBName.MatchString(dbname) || strings.Contains(dbname, "..") || dbname == "." {
+		return fmt.Errorf("%w: %q", ErrInvalidDBName, dbname)
+	}
+	return nil
 }
 
 // open opens a temporary copy of the SQLite database at the given path (that
@@ -127,7 +175,8 @@ func sanitize(basename string) string {
 // “/” when opening a database in another container, as well as from creating
 // WAL and SHM files next to the original database.
 func open(fsys fs.FS, pathname string) (_ *AppEngineDB, err error) {
-	tmpDir, err := os.MkdirTemp("", "temp-db-copy-*")
+	sweepStaleTmpDirsOnce()
+	tmpDir, err := os.MkdirTemp("", tmpDirPattern())
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
@@ -158,7 +207,7 @@ func statFile(fsys fs.FS, name string) fileState {
 }
 
 // copyDB copies the database and its WAL file, if any, retrying when either
-// changed while being copied.
+// changed while being copied, but keeping the last copy in any case.
 func copyDB(fsys fs.FS, pathname, dbpath string) error {
 	for attempt := 1; ; attempt++ {
 		dbBefore, walBefore := statFile(fsys, pathname), statFile(fsys, pathname+"-wal")
@@ -177,10 +226,11 @@ func copyDB(fsys fs.FS, pathname, dbpath string) error {
 	}
 }
 
-// connect opens the database specified by dsn and checks that it actually is a
+// connect opens the database at dbpath and checks that it actually is a
 // database. tmpDir gets removed when closing the database.
-func connect(dsn, tmpDir string) (*AppEngineDB, error) {
-	db, err := sqlx.Open(dbDriverName, dsn)
+func connect(dbpath, tmpDir string) (*AppEngineDB, error) {
+	// A URI keeps SQLite from interpreting “?” and “#” in the path.
+	db, err := sqlx.Open(dbDriverName, (&url.URL{Scheme: "file", Path: dbpath}).String())
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}

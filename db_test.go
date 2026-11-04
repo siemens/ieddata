@@ -68,11 +68,6 @@ var _ = Describe("IED app engine database", func() {
 
 	})
 
-	It("sanitizes database names", func() {
-		Expect(sanitize("abcxyz.0-9")).To(Equal("abcxyz.0-9"))
-		Expect(sanitize("../abc?foo=bar")).To(Equal("__abc_foo_bar"))
-	})
-
 	It("fails for invalid container PID", func() {
 		Expect(OpenInPID("foo.db", 0)).Error().To(MatchError(MatchRegexp(`no such file or directory`)))
 	})
@@ -108,6 +103,9 @@ var _ = Describe("IED app engine database", func() {
 		}),
 		Entry("OpenCtx", func(ctx context.Context) (*AppEngineDB, error) {
 			return OpenCtx(ctx, PlatformBoxDb)
+		}),
+		Entry("OpenCtx with Docker host", func(ctx context.Context) (*AppEngineDB, error) {
+			return OpenCtx(ctx, PlatformBoxDb, WithDockerHost("unix:///run/docker.sock"))
 		}),
 		Entry("OpenFS", func(ctx context.Context) (*AppEngineDB, error) {
 			return OpenFS(wormholes.New(Successful(fakecore.PID(ctx))),

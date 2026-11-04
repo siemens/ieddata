@@ -6,13 +6,18 @@ package ieddata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/thediveo/morbyd/v2"
 	"github.com/thediveo/morbyd/v2/build"
 	"github.com/thediveo/morbyd/v2/exec"
@@ -86,3 +91,61 @@ func TestIEDData(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "ieddata package")
 }
+
+// fixtureDB is the test database with apps and device information.
+const fixtureDB = "tests/sqlite-alpine-appengine-db/test-apps-and-device.db"
+
+// openModifiedFixture opens a copy of the test database after executing the
+// specified SQL statements on it, closing it automatically at the end of the
+// current spec.
+func openModifiedFixture(stmts ...string) *AppEngineDB {
+	GinkgoHelper()
+	dir := Successful(os.MkdirTemp("", "ieddata-test-"))
+	DeferCleanup(os.RemoveAll, dir)
+	dbpath := filepath.Join(dir, "test.db")
+	Expect(os.WriteFile(dbpath, Successful(os.ReadFile(fixtureDB)), 0o600)).To(Succeed())
+
+	db := Successful(sqlx.Open(dbDriverName, dbpath))
+	for _, stmt := range stmts {
+		Expect(db.Exec(stmt)).Error().NotTo(HaveOccurred(), stmt)
+	}
+	Expect(db.Close()).To(Succeed())
+
+	appdb := Successful(OpenFS(os.DirFS(dir), "test.db"))
+	DeferCleanup(appdb.Close)
+	return appdb
+}
+
+// changingFS simulates a database that gets modified while being copied, for
+// the specified number of times.
+type changingFS struct {
+	fstest.MapFS
+	changes int
+	opens   int
+}
+
+func (c *changingFS) Open(name string) (fs.File, error) {
+	if name == "test.db" {
+		c.opens++
+		if c.changes > 0 {
+			c.changes--
+			c.MapFS[name].ModTime = c.MapFS[name].ModTime.Add(time.Second)
+		}
+	}
+	return c.MapFS.Open(name)
+}
+
+// failingFS returns files that fail reading.
+type failingFS struct{ fstest.MapFS }
+
+func (f failingFS) Open(name string) (fs.File, error) {
+	file, err := f.MapFS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return failingFile{file}, nil
+}
+
+type failingFile struct{ fs.File }
+
+func (failingFile) Read([]byte) (int, error) { return 0, errors.New("read failure") }

@@ -17,9 +17,6 @@ import (
 var _ = Describe("device info", func() {
 
 	BeforeEach(func() {
-		if os.Getuid() != 0 {
-			Skip("needs root")
-		}
 		goodfds := Filedescriptors()
 		DeferCleanup(func() {
 			Eventually(Filedescriptors).Within(2 * time.Second).WithPolling(250 * time.Millisecond).
@@ -27,14 +24,28 @@ var _ = Describe("device info", func() {
 		})
 	})
 
-	It("accesses device information", func() {
-		db := Successful(Open("platformbox.db"))
-		defer func() { _ = db.Close() }()
+	It("reports an error for the wrong database", func() {
+		Expect(openModifiedFixture("DROP TABLE device").DeviceInfo()).Error().To(
+			MatchError(ContainSubstring("no such table: device")))
+	})
 
-		m, err := db.DeviceInfo()
-		Expect(err).NotTo(HaveOccurred())
-		Expect(m).To(HaveKeyWithValue("deviceName", "iedx12345"))
-		Expect(m).To(HaveKeyWithValue("ownerEmail", "foo.bar@example.com"))
+	When("accessing an IED", func() {
+
+		BeforeEach(func() {
+			if os.Getuid() != 0 {
+				Skip("needs root")
+			}
+		})
+
+		It("accesses device information", func() {
+			db := Successful(Open(PlatformBoxDb))
+			defer func() { _ = db.Close() }()
+
+			Expect(db.DeviceInfo()).To(SatisfyAll(
+				HaveKeyWithValue("deviceName", "iedx12345"),
+				HaveKeyWithValue("ownerEmail", "foo.bar@example.com")))
+		})
+
 	})
 
 })

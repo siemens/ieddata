@@ -7,33 +7,14 @@ package ieddata
 import (
 	"io/fs"
 	"os"
+	"path/filepath"
 	"testing/fstest"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/thediveo/fdooze"
 	. "github.com/thediveo/success"
 )
-
-// changingFS simulates a database that gets modified while being copied, for
-// the specified number of times.
-type changingFS struct {
-	fstest.MapFS
-	changes int
-	opens   int
-}
-
-func (c *changingFS) Open(name string) (fs.File, error) {
-	if name == "test.db" {
-		c.opens++
-		if c.changes > 0 {
-			c.changes--
-			c.MapFS[name].ModTime = c.MapFS[name].ModTime.Add(time.Second)
-		}
-	}
-	return c.MapFS.Open(name)
-}
 
 var _ = Describe("copying databases", func() {
 
@@ -48,7 +29,7 @@ var _ = Describe("copying databases", func() {
 		func(changes, expectedOpens int) {
 			fsys := &changingFS{
 				MapFS: fstest.MapFS{"test.db": &fstest.MapFile{
-					Data: Successful(os.ReadFile("tests/sqlite-alpine-appengine-db/test-apps-and-device.db")),
+					Data: Successful(os.ReadFile(fixtureDB)),
 				}},
 				changes: changes,
 			}
@@ -61,5 +42,44 @@ var _ = Describe("copying databases", func() {
 		Entry("changed once", 1, 2),
 		Entry("changing all the time", 42, maxCopyAttempts),
 	)
+
+	It("copies into a temporary directory identifying this process", func() {
+		parentDir := Successful(os.MkdirTemp("", "ieddata-test-"))
+		DeferCleanup(os.RemoveAll, parentDir)
+		tmpDir := filepath.Join(parentDir, "with?query#and-fragment")
+		Expect(os.Mkdir(tmpDir, 0o700)).To(Succeed())
+		GinkgoT().Setenv("TMPDIR", tmpDir)
+
+		db := Successful(OpenFS(os.DirFS(filepath.Dir(fixtureDB)), filepath.Base(fixtureDB)))
+		Expect(db.Apps()).To(HaveLen(4))
+		Expect(Allright(parseTmpDirName(filepath.Base(db.tmpDir)))).To(Equal(Successful(selfIdentity())))
+
+		copyDir := db.tmpDir
+		Expect(db.Close()).To(Succeed())
+		Expect(copyDir).NotTo(BeAnExistingFile())
+	})
+
+	DescribeTable("leaves no temporary directory behind when copying fails",
+		func(fsys fs.FS, expectedErr string) {
+			tmpDir := Successful(os.MkdirTemp("", "ieddata-test-"))
+			DeferCleanup(os.RemoveAll, tmpDir)
+			GinkgoT().Setenv("TMPDIR", tmpDir)
+
+			Expect(OpenFS(fsys, "test.db")).Error().To(MatchError(SatisfyAll(
+				ContainSubstring("unable to open database"),
+				ContainSubstring(expectedErr))))
+			Expect(os.ReadDir(tmpDir)).To(BeEmpty())
+		},
+		Entry("missing database", fstest.MapFS{}, "file does not exist"),
+		Entry("read failure", failingFS{fstest.MapFS{"test.db": &fstest.MapFile{Data: []byte("x")}}}, "read failure"),
+		Entry("not a database", fstest.MapFS{"test.db": &fstest.MapFile{Data: []byte("not a database")}}, "not a database"),
+	)
+
+	It("fails when the temporary directory cannot be created", func() {
+		GinkgoT().Setenv("TMPDIR", "/nonexisting-tmpdir")
+		Expect(OpenFS(fstest.MapFS{}, "test.db")).Error().To(MatchError(SatisfyAll(
+			ContainSubstring("unable to open database"),
+			ContainSubstring("/nonexisting-tmpdir"))))
+	})
 
 })
