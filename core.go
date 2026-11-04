@@ -7,6 +7,7 @@ package ieddata
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/whalewatcher/v2/watcher/moby"
@@ -28,16 +29,16 @@ func edgeCoreContainerPID() (model.PIDType, error) {
 	// Then start watching which also triggers the initial synchronization with
 	// the current workload. And wait for the initial synchronization to be
 	// finished.
-	watcherPrematurlyTerminated := make(chan struct{}, 1)
+	watchErr := make(chan error, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		_ = mobywatcher.Watch(ctx)
-		close(watcherPrematurlyTerminated)
+		watchErr <- mobywatcher.Watch(ctx)
 	}()
 	select {
 	case <-mobywatcher.Ready():
-	case <-watcherPrematurlyTerminated:
+	case err := <-watchErr:
+		return 0, fmt.Errorf("container engine watcher terminated prematurely, reason: %w", err)
 	}
 
 	// Now see if there's an IE runtime container somewhere...
