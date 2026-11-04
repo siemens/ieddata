@@ -39,12 +39,23 @@ var _ = Describe("IED runtime", func() {
 		DeferCleanup(func(ctx context.Context) {
 			Expect(fakecore.Rename(ctx, EdgeIotCoreContainerName)).To(Succeed())
 		})
-		Expect(edgeCoreContainerPID()).Error().To(HaveOccurred())
+		Expect(edgeCoreContainerPID(ctx, defaultDockerHost)).Error().To(HaveOccurred())
 	})
 
-	It("finds the IED runtime", func() {
+	It("gives up when the context is done", func(ctx context.Context) {
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+		Expect(edgeCoreContainerPID(ctx, defaultDockerHost)).Error().To(MatchError(context.Canceled))
+	})
+
+	It("fails for an invalid Docker host", func(ctx context.Context) {
+		Expect(edgeCoreContainerPID(ctx, "unix:///nonexisting/docker.sock")).Error().To(
+			MatchError(ContainSubstring("cannot reach container engine")))
+	})
+
+	It("finds the IED runtime", func(ctx context.Context) {
 		By("looking for the IED runtime's PID...")
-		pid := Successful(edgeCoreContainerPID())
+		pid := Successful(edgeCoreContainerPID(ctx, defaultDockerHost))
 		Expect(pid).NotTo(BeZero())
 
 		By("...and container canary file")
