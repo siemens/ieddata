@@ -36,6 +36,10 @@ const dbDriverName = "sqlite"
 // container.
 const openTimeout = 30 * time.Second
 
+// maxCopyAttempts limits how often to copy a database that keeps changing
+// while being copied.
+const maxCopyAttempts = 3
+
 // AppEngineDB implements access to an IED app engine host database.
 type AppEngineDB struct {
 	*sqlx.DB
@@ -55,6 +59,8 @@ type AppEngineDB struct {
 // then gives direct file system access to the app engine DBs inside this
 // container. Open gives up discovering the IED runtime container after 30s;
 // use [OpenCtx] for a different timeout or cancellation.
+//
+// Open reads from a temporary copy of the database; see [OpenFS] for details.
 func Open(dbname string) (*AppEngineDB, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
 	defer cancel()
@@ -84,20 +90,22 @@ func OpenInPID(dbname string, pid model.PIDType) (*AppEngineDB, error) {
 	return OpenPathInPID(path.Join(dbBaseDir, sanitize(dbname)), pid)
 }
 
-// OpenPathInPID works like OpenInPID but take a full path and database name as
+// OpenPathInPID works like OpenInPID but takes a full path and database name as
 // well as a PID within which to resolve the pathname. Use this primarily in
 // (unit) tests where spinning up a fake IED runtime container is overkill.
 //
 // Deprecated: use [OpenFS] with a [wormholes.FS] instead.
-// instead.
 func OpenPathInPID(pathname string, pid model.PIDType) (*AppEngineDB, error) {
-	pathname = strings.TrimPrefix(pathname, "/")
-	vfs := wormholes.New(int(pid))
-	return open(vfs, pathname)
+	return open(wormholes.New(int(pid)), strings.TrimPrefix(pathname, "/"))
 }
 
-// OpenFS works like Open but opens the specified database in the passed
-// fs.FS.
+// OpenFS works like Open but opens a temporary copy of the specified database
+// in the passed fs.FS.
+//
+// The copy, including any WAL file, is a snapshot taken at opening time, so
+// later changes to the database aren't visible. When the database changes
+// while being copied, OpenFS retries copying a few times. The copy is placed in
+// [os.TempDir] and only removed when calling [AppEngineDB.Close].
 func OpenFS(fsys fs.FS, pathname string) (*AppEngineDB, error) {
 	return open(fsys, pathname)
 }
@@ -113,20 +121,12 @@ func sanitize(basename string) string {
 	return noDotDots.ReplaceAllString(onlyAlphaNumsAndMore.ReplaceAllString(basename, "_"), "_")
 }
 
-// open actually opens the SQLite database read-only at the given path (that
+// open opens a temporary copy of the SQLite database at the given path (that
 // must follow fs.FS semantics and thus not start with "/") on the passed fs.FS.
-//
-// As it turns out there are some situations which we don't yet fully understand
-// but that causes opening the database via a proc path to fail, even if it
-// succeeds in other situations. Interestingly, the termdbms sqlite3 TUI works
-// in all these situation and an analysis of its source code base reveals that
-// it simply makes a copy of the original database, see
-// https://github.com/mathaou/termdbms/blob/be6f397196077cc7c9ced86e6460470e3b223f3e/main.go#L132.
-//
-// Well, what's good for the goose is good for the gander, so copy it is. Sigh.
+// Copying keeps SQLite from resolving the “/proc/[PID]/root” magic symlink to
+// “/” when opening a database in another container, as well as from creating
+// WAL and SHM files next to the original database.
 func open(fsys fs.FS, pathname string) (_ *AppEngineDB, err error) {
-	// Make a temporary copy of the database so we can open it successfully in
-	// all our cases.
 	tmpDir, err := os.MkdirTemp("", "temp-db-copy-*")
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
@@ -137,16 +137,44 @@ func open(fsys fs.FS, pathname string) (_ *AppEngineDB, err error) {
 		}
 	}()
 	dbpath := filepath.Join(tmpDir, "db")
-	if err := copyFile(fsys, pathname, dbpath); err != nil {
+	if err := copyDB(fsys, pathname, dbpath); err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
 
-	// When available, make a copy of the accompanying WAL file also.
-	if err := copyFile(fsys, pathname+"-wal", dbpath+"-wal"); err != nil {
+	return connect(dbpath, tmpDir)
+}
+
+// fileState identifies a file's contents by its size and modification time.
+type fileState struct{ size, modTime int64 }
+
+// statFile returns the state of the named file, or the zero state if the file
+// cannot be stat'ed.
+func statFile(fsys fs.FS, name string) fileState {
+	info, err := fs.Stat(fsys, name)
+	if err != nil {
+		return fileState{}
+	}
+	return fileState{size: info.Size(), modTime: info.ModTime().UnixNano()}
+}
+
+// copyDB copies the database and its WAL file, if any, retrying when either
+// changed while being copied.
+func copyDB(fsys fs.FS, pathname, dbpath string) error {
+	for attempt := 1; ; attempt++ {
+		dbBefore, walBefore := statFile(fsys, pathname), statFile(fsys, pathname+"-wal")
+		if err := copyFile(fsys, pathname, dbpath); err != nil {
+			return err
+		}
+		if err := copyFile(fsys, pathname+"-wal", dbpath+"-wal"); err != nil {
+			_ = os.Remove(dbpath + "-wal")
+		}
+		if attempt == maxCopyAttempts ||
+			(statFile(fsys, pathname) == dbBefore && statFile(fsys, pathname+"-wal") == walBefore) {
+			return nil
+		}
+		_ = os.Remove(dbpath)
 		_ = os.Remove(dbpath + "-wal")
 	}
-
-	return connect(dbpath, tmpDir)
 }
 
 // connect opens the database specified by dsn and checks that it actually is a
