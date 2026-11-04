@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -32,8 +33,8 @@ const dbDriverName = "sqlite"
 // AppEngineDB implements access to an IED app engine host database.
 type AppEngineDB struct {
 	*sqlx.DB
-	copiedDatabasePath string
-	closeMu            sync.Mutex
+	tmpDir  string // holds the database copy and its WAL/SHM files
+	closeMu sync.Mutex
 }
 
 // Open returns a new database “connection” to the specified app engine DB, such
@@ -104,47 +105,37 @@ func sanitize(basename string) string {
 // https://github.com/mathaou/termdbms/blob/be6f397196077cc7c9ced86e6460470e3b223f3e/main.go#L132.
 //
 // Well, what's good for the goose is good for the gander, so copy it is. Sigh.
-func open(fsys fs.FS, pathname string) (*AppEngineDB, error) {
+func open(fsys fs.FS, pathname string) (_ *AppEngineDB, err error) {
 	// Make a temporary copy of the database so we can open it successfully in
 	// all our cases.
-	origdbf, err := fsys.Open(pathname)
+	tmpDir, err := os.MkdirTemp("", "temp-db-copy-*")
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
-	defer func() { _ = origdbf.Close() }()
-	tmpdbf, err := os.CreateTemp("", "temp-db-copy-*")
-	if err != nil {
-		return nil, fmt.Errorf("unable to open database, reason: %w", err)
-	}
-	defer func() { _ = tmpdbf.Close() }()
-	if _, err := io.Copy(tmpdbf, origdbf); err != nil {
-		_ = os.Remove(tmpdbf.Name())
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
+	dbpath := filepath.Join(tmpDir, "db")
+	if err := copyFile(fsys, pathname, dbpath); err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}
 
 	// When available, make a copy of the accompanying WAL file also.
-	if walf, err := fsys.Open(pathname + "-wal"); err == nil {
-		defer func() { _ = walf.Close() }()
-		if tmpwalf, err := os.Create(tmpdbf.Name() + "-wal"); err == nil {
-			defer func() { _ = tmpwalf.Close() }()
-			if _, err := io.Copy(tmpwalf, walf); err != nil {
-				_ = os.Remove(tmpwalf.Name())
-			}
-			_ = tmpwalf.Close()
-		}
-		_ = walf.Close()
+	if err := copyFile(fsys, pathname+"-wal", dbpath+"-wal"); err != nil {
+		_ = os.Remove(dbpath + "-wal")
 	}
 
 	// As sql.Open might just "validate its parameters" and this might mean near
 	// to nothing, we explicitly ping the database in order to see that it is
 	// okay.
-	dbpath := tmpdbf.Name()
-	_ = tmpdbf.Close()
 	db, err := sqlx.Open(dbDriverName, dbpath)
 	if err != nil {
 		return nil, err
 	}
 	if err := db.Ping(); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -155,9 +146,27 @@ func open(fsys fs.FS, pathname string) (*AppEngineDB, error) {
 	// Success, now wrap the sql.DB object in our AppEngineDB object, so that we
 	// later correctly can clean up when the Close method gets called.
 	return &AppEngineDB{
-		DB:                 db,
-		copiedDatabasePath: dbpath,
+		DB:     db,
+		tmpDir: tmpDir,
 	}, nil
+}
+
+// copyFile copies src from fsys to a newly created (non-existing) dst file.
+func copyFile(fsys fs.FS, src, dst string) error {
+	srcf, err := fsys.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = srcf.Close() }()
+	dstf, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(dstf, srcf); err != nil {
+		_ = dstf.Close()
+		return err
+	}
+	return dstf.Close()
 }
 
 // Close closes the database connection and ensures to additionally dispose of
@@ -167,9 +176,9 @@ func (db *AppEngineDB) Close() error {
 	db.closeMu.Lock()
 	defer db.closeMu.Unlock()
 	err := db.DB.Close()
-	if db.copiedDatabasePath != "" {
-		_ = os.Remove(db.copiedDatabasePath)
-		db.copiedDatabasePath = ""
+	if db.tmpDir != "" {
+		_ = os.RemoveAll(db.tmpDir)
+		db.tmpDir = ""
 	}
 	return err
 }
