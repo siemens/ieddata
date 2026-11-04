@@ -28,6 +28,9 @@ import (
 var sess *morbyd.Session
 var fakecore *morbyd.Container
 
+// Device info row that the fake core writes only into the WAL.
+const walKey, walValue = "walKey", "walValue"
+
 var _ = BeforeSuite(func(ctx context.Context) {
 	if os.Getuid() != 0 {
 		return
@@ -75,6 +78,8 @@ var _ = BeforeSuite(func(ctx context.Context) {
 		return fmt.Sprintf("/proc/%d/root/%s/%s", Successful(fakecore.PID(ctx)), dbBaseDir, PlatformBoxDb+"-wal")
 	}).
 		Within(5 * time.Second).ProbeEvery(100 * time.Millisecond).To(BeAnExistingFile())
+	Expect(fmt.Fprintf(pipew, "INSERT INTO device(deviceKey, deviceValue) VALUES('%s', '%s');\n",
+		walKey, walValue)).Error().To(Succeed())
 })
 
 func TestIEDData(t *testing.T) {

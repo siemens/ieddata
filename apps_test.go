@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/thediveo/lxkns/model"
 	"github.com/thediveo/procfsroot/wormholes"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -26,27 +27,34 @@ var _ = Describe("IED app engine installed apps", func() {
 		})
 	})
 
-	It("reads installed app information", func() {
-		// Use a local test database, so we don't need to rely on an (fake) edge
-		// core running.
-		vfs := wormholes.New(os.Getpid())
-		db := Successful(open(vfs,
-			Successful(filepath.Abs("tests/sqlite-alpine-appengine-db/test-apps-and-device.db"))[1:]))
-		defer func() { _ = db.Close() }()
+	// Use a local test database, so we don't need to rely on an (fake) edge
+	// core running.
+	DescribeTable("reads installed app information",
+		func(opener func(dbpath string) (*AppEngineDB, error)) {
+			db := Successful(opener(
+				Successful(filepath.Abs("tests/sqlite-alpine-appengine-db/test-apps-and-device.db"))))
+			defer func() { _ = db.Close() }()
 
-		apps := Successful(db.Apps())
-		Expect(apps).To(HaveLen(4))
-		t0 := Successful(time.Parse("2006-01-02", "2021-01-01"))
-		Expect(apps).To(HaveEach(SatisfyAll(
-			HaveField("Id", Not(BeZero())),
-			HaveField("Version", Not(BeZero())),
-			HaveField("VersionId", Not(BeZero())),
-			HaveField("ProjectId", Not(BeZero())),
-			HaveField("Created.Unix()", BeNumerically(">=", t0.Unix())),
-			HaveField("Id", Not(BeZero())),
-			HaveField("IconPath", Not(BeZero())),
-		)))
-		Expect(apps).To(ContainElement(HaveField("IsDebuggingEnabled", 1)))
-	})
+			apps := Successful(db.Apps())
+			Expect(apps).To(HaveLen(4))
+			t0 := Successful(time.Parse("2006-01-02", "2021-01-01"))
+			Expect(apps).To(HaveEach(SatisfyAll(
+				HaveField("Id", Not(BeZero())),
+				HaveField("Version", Not(BeZero())),
+				HaveField("VersionId", Not(BeZero())),
+				HaveField("ProjectId", Not(BeZero())),
+				HaveField("Created.Unix()", BeNumerically(">=", t0.Unix())),
+				HaveField("Id", Not(BeZero())),
+				HaveField("IconPath", Not(BeZero())),
+			)))
+			Expect(apps).To(ContainElement(HaveField("IsDebuggingEnabled", 1)))
+		},
+		Entry("OpenPathInPID", func(dbpath string) (*AppEngineDB, error) {
+			return OpenPathInPID(dbpath, model.PIDType(os.Getpid()))
+		}),
+		Entry("OpenFS", func(dbpath string) (*AppEngineDB, error) {
+			return OpenFS(wormholes.New(os.Getpid()), dbpath[1:])
+		}),
+	)
 
 })

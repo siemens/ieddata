@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/thediveo/procfsroot/wormholes"
 	"golang.org/x/sys/unix"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -90,20 +91,28 @@ var _ = Describe("IED app engine database", func() {
 		Expect(Open("not.a.db")).Error().To(MatchError(ContainSubstring("unable to open database")))
 	})
 
-	It("accesses the app engine database", func() {
-		db := Successful(Open(PlatformBoxDb))
-		defer func() { _ = db.Close() }()
-
-		rows := Successful(db.Query("SELECT deviceKey, deviceValue from device"))
-		defer func() { Expect(rows.Close()).To(Succeed()) }()
-		m := map[string]string{}
-		for rows.Next() {
-			var key, value string
-			Expect(rows.Scan(&key, &value)).To(Succeed())
-			m[key] = value
-		}
-		Expect(m).To(HaveKeyWithValue("deviceName", "iedx12345"))
-		Expect(m).To(HaveKeyWithValue("ownerEmail", "foo.bar@example.com"))
-	})
+	DescribeTable("accesses the app engine database including its WAL",
+		func(ctx context.Context, opener func(context.Context) (*AppEngineDB, error)) {
+			Eventually(func(g Gomega) {
+				db, err := opener(ctx)
+				g.Expect(err).NotTo(HaveOccurred())
+				defer func() { _ = db.Close() }()
+				g.Expect(db.DeviceInfo()).To(And(
+					HaveKeyWithValue("deviceName", "iedx12345"),
+					HaveKeyWithValue("ownerEmail", "foo.bar@example.com"),
+					HaveKeyWithValue(walKey, walValue)))
+			}).Within(5 * time.Second).ProbeEvery(250 * time.Millisecond).Should(Succeed())
+		},
+		Entry("Open", func(context.Context) (*AppEngineDB, error) {
+			return Open(PlatformBoxDb)
+		}),
+		Entry("OpenCtx", func(ctx context.Context) (*AppEngineDB, error) {
+			return OpenCtx(ctx, PlatformBoxDb)
+		}),
+		Entry("OpenFS", func(ctx context.Context) (*AppEngineDB, error) {
+			return OpenFS(wormholes.New(Successful(fakecore.PID(ctx))),
+				path.Join(dbBaseDir, PlatformBoxDb)[1:])
+		}),
+	)
 
 })
