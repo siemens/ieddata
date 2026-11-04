@@ -229,8 +229,13 @@ func copyDB(fsys fs.FS, pathname, dbpath string) error {
 // connect opens the database at dbpath and checks that it actually is a
 // database. tmpDir gets removed when closing the database.
 func connect(dbpath, tmpDir string) (*AppEngineDB, error) {
-	// A URI keeps SQLite from interpreting “?” and “#” in the path.
-	db, err := sqlx.Open(dbDriverName, (&url.URL{Scheme: "file", Path: dbpath}).String())
+	// A URI keeps SQLite from interpreting “?” and “#” in the path; real IEDs
+	// mix text and Unix seconds timestamps, even within the same column.
+	db, err := sqlx.Open(dbDriverName, (&url.URL{
+		Scheme:   "file",
+		Path:     dbpath,
+		RawQuery: "_inttotime=true",
+	}).String())
 	if err != nil {
 		return nil, fmt.Errorf("unable to open database, reason: %w", err)
 	}

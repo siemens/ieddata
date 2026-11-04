@@ -83,6 +83,21 @@ var _ = Describe("IED app engine installed apps", func() {
 			))))
 	})
 
+	It("handles mixed text and integer timestamps", func() {
+		db := openModifiedFixture(
+			`UPDATE application SET createdDate=1751964294, modifiedDate=1751964295
+				WHERE appId=(SELECT min(appId) FROM application)`)
+		t0 := Successful(time.Parse("2006-01-02", "2021-01-01"))
+		Expect(db.Apps()).To(SatisfyAll(
+			HaveLen(4),
+			HaveEach(HaveField("Created", BeTemporally(">=", t0))),
+			ContainElement(SatisfyAll(
+				HaveField("Created", BeTemporally("==", time.Unix(1751964294, 0))),
+				HaveField("Modified", BeTemporally("==", time.Unix(1751964295, 0))),
+			)),
+		))
+	})
+
 	It("tolerates missing and additional columns", func() {
 		db := openModifiedFixture(
 			"ALTER TABLE applicationversions DROP COLUMN serviceLabels",
