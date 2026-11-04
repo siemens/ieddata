@@ -45,9 +45,9 @@ func edgeCoreContainerPID(ctx context.Context, dockerHost string) (model.PIDType
 		return 0, fmt.Errorf("cannot discover Industrial Edge runtime container, reason: %w", ctx.Err())
 	case err := <-watchErr:
 		if ctx.Err() != nil {
-			err = ctx.Err()
+			return 0, fmt.Errorf("cannot discover Industrial Edge runtime container, reason: %w", ctx.Err())
 		}
-		return 0, fmt.Errorf("container engine watcher terminated prematurely, reason: %w", err)
+		return 0, fmt.Errorf("cannot reach container engine at %q, reason: %w", dockerHost, err)
 	}
 
 	// Now see if there's an IE runtime container somewhere...
